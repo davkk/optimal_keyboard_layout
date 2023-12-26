@@ -1,6 +1,6 @@
-(executable
- (public_name main)
- (name main)
+(executables
+ (public_names main hist)
+ (names main hist)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.enum))
  (libraries lib core fmt ppx_deriving))
