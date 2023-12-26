@@ -1,5 +1,7 @@
 let words = Stdio.In_channel.with_file "macbeth.txt" ~f:In_channel.input_all
 
+[@@@warning "-32"]
+
 type finger =
   | LPinky
   | LRing
@@ -17,6 +19,8 @@ type keyboard =
   ; score : float
   }
 [@@deriving show { with_path = false }]
+
+[@@@warning "+32"]
 
 let key_to_finger key =
   match key mod 10 with
@@ -124,7 +128,7 @@ let crossover population =
   let parent1, parent2 = select_pair population in
   let offspring =
     Array.init (Array.length parent1.keys) (fun idx ->
-      let x1, y1 = coords idx in
+      let x1, _ = coords idx in
       if x1 < 5 then Some parent1.keys.(idx) else None)
   in
   Array.iter
@@ -161,28 +165,32 @@ let mutation population =
   population
 ;;
 
+let pp_keys kb =
+  kb.keys
+  |> Array.iteri (fun idx key ->
+    if idx mod 10 = 0 then Fmt.epr "@.";
+    Fmt.epr "%c " key)
+;;
+
 let optimize () =
   let rec aux step population =
     let size = Array.length population in
-    if step = 200
-    then (
-      let result =
-        Core.Array.min_elt population ~compare:(fun a b ->
-          compare a.score b.score)
-      in
-      Fmt.epr "@.Result: %a@." (Fmt.option pp_keyboard) result)
+    if step = 100
+    then
+      Core.Array.min_elt population ~compare:(fun a b ->
+        compare a.score b.score)
+      |> function
+      | Some keyboard -> pp_keys keyboard
+      | None -> ()
     else begin
-      let new_population =
+      let population =
         Array.init size (fun _ -> crossover population) |> mutation
       in
-      let result =
-        Core.Array.min_elt new_population ~compare:(fun a b ->
-          compare a.score b.score)
+      let average =
+        Array.fold_left (fun acc kb -> acc +. kb.score) 0.0 population
       in
-      (match result with
-       | Some kb -> Fmt.pr "%d %f@." step kb.score
-       | None -> ());
-      aux (step + 1) new_population
+      Fmt.pr "%d %f@." step average;
+      aux (step + 1) population
     end
   in
   aux 0 @@ init_population 10
@@ -192,6 +200,3 @@ let () =
   Random.init 2001;
   optimize ()
 ;;
-(* optimize () *)
-
-(* Fmt.pr "@.%a@." (Fmt.array ~sep:Fmt.sp pp_keyboard) population *)
