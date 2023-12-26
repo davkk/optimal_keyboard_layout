@@ -35,9 +35,9 @@ let key_to_finger key =
   | _ -> Noop
 ;;
 
-let coords idx =
-  let x = idx mod 10 in
-  let y = idx / 10 in
+let coords ?(max = 10) idx =
+  let y = idx mod max in
+  let x = idx / max in
   x, y
 ;;
 
@@ -49,23 +49,26 @@ let dist a b =
 
 let fitness text keys =
   let fingers = [| 11; 12; 13; 14; 17; 18; 19; 20 |] in
-  String.fold_left
-    (fun acc letter ->
-      let curr_key =
-        keys
-        |> Array.find_index (( = ) @@ Char.lowercase_ascii letter)
-        |> Option.value ~default:(-1)
-      in
-      match key_to_finger curr_key with
-      | Noop -> acc
-      | finger -> begin
-        let finger_idx = finger_to_enum finger in
-        let prev_key = fingers.(finger_idx) in
-        fingers.(finger_idx) <- curr_key;
-        acc +. dist prev_key curr_key
-      end)
-    0.0
-    text
+  let score =
+    String.fold_left
+      (fun acc letter ->
+        let curr_key =
+          keys
+          |> Array.find_index (( = ) @@ Char.lowercase_ascii letter)
+          |> Option.value ~default:(-1)
+        in
+        match key_to_finger curr_key with
+        | Noop -> acc
+        | finger -> begin
+          let finger_idx = finger_to_enum finger in
+          let prev_key = fingers.(finger_idx) in
+          fingers.(finger_idx) <- curr_key;
+          acc +. dist prev_key curr_key
+        end)
+      0.0
+      text
+  in
+  1e8 /. score
 ;;
 
 let shuffle arr =
@@ -89,23 +92,24 @@ let init_population n =
 ;;
 
 let roulette population =
-  Array.sort (fun a b -> compare a.score b.score) population;
   let total_score =
     Array.fold_left (fun acc kb -> acc +. kb.score) 0.0 population
   in
   let _, cdf =
     Array.fold_left_map
       (fun acc kb ->
-        let prob = acc +. (1.0 -. (kb.score /. total_score)) in
+        let prob = acc +. (kb.score /. total_score) in
         prob, prob)
       0.0
       population
   in
+  (* Fmt.pr "cdf: %a@." Fmt.(array ~sep:comma float) cdf; *)
   cdf
 ;;
 
 module IntSet = Set.Make (Int)
 
+(* TODO: call roulette once outside, pass only the cdf and return (int * int) *)
 let select_pair population =
   let cdf = roulette population in
   let rec aux set =
@@ -114,32 +118,49 @@ let select_pair population =
     else (
       let rand_kb =
         Array.find_index (fun prob -> Random.float 1.0 < prob) cdf
+        |> Option.value ~default:(-1)
       in
-      match rand_kb with
-      | Some kb -> aux @@ IntSet.add kb set
-      | None -> failwith "impossible 1")
+      aux @@ IntSet.add rand_kb set)
   in
   match aux IntSet.empty |> IntSet.elements with
   | [ a; b ] -> population.(a), population.(b)
-  | _ -> failwith "impossible 2"
+  | _ -> failwith "cannot perform the crossover"
+;;
+
+let pp_keys keys =
+  keys
+  |> Array.iteri (fun idx key ->
+    if idx mod 10 = 0 then Fmt.epr "@.";
+    Fmt.epr "%c " key);
+  Fmt.epr "@."
+;;
+
+let transposed_idx_iter ?(from = 0) ~upto =
+  Iter.(from -- (upto - 1))
+  |> Iter.map (fun idx ->
+    let x, y = coords ~max:3 idx in
+    x + (y * 10))
+  |> Iter.persistent_lazy
 ;;
 
 let crossover population =
   let parent1, parent2 = select_pair population in
-  let offspring =
-    Array.init (Array.length parent1.keys) (fun idx ->
-      let x1, _ = coords idx in
-      if x1 < 5 then Some parent1.keys.(idx) else None)
+  let offspring = Array.copy parent1.keys in
+  let len = Array.length offspring in
+  let lh_keys =
+    transposed_idx_iter ~upto:(len / 2)
+    |> Iter.map (fun idx -> parent1.keys.(idx))
+    |> Iter.persistent_lazy
   in
-  Array.iter
-    (fun key ->
-      match Array.find_index Option.is_none offspring with
-      | Some idx ->
-        if not @@ Array.mem (Some key) offspring
-        then offspring.(idx) <- Some key
-      | None -> ())
-    parent2.keys;
-  let offspring = Core.Array.filter_map ~f:(fun kb -> kb) offspring in
+  let available_keys =
+    parent2.keys
+    |> Core.Array.filter ~f:(fun key -> not @@ Iter.mem key lh_keys)
+  in
+  transposed_idx_iter ~from:(len / 2) ~upto:len
+  |> Iter.iteri (fun idx key_idx -> offspring.(key_idx) <- available_keys.(idx));
+  (* pp_keys parent1.keys; *)
+  (* pp_keys parent2.keys; *)
+  (* pp_keys offspring; *)
   { keys = offspring; score = fitness words offspring }
 ;;
 
@@ -156,42 +177,44 @@ let random_int_pair ~max =
 ;;
 
 let mutation population =
-  let p_mut = 0.03 in
+  let p_mut = 0.05 in
   Array.iter
     (fun kb ->
       let idx1, idx2 = random_int_pair ~max:(Array.length kb.keys) in
       if Random.float 1.0 < p_mut then Core.Array.swap kb.keys idx1 idx2)
-    population;
-  population
-;;
-
-let pp_keys kb =
-  kb.keys
-  |> Array.iteri (fun idx key ->
-    if idx mod 10 = 0 then Fmt.epr "@.";
-    Fmt.epr "%c " key)
+    population
 ;;
 
 let optimize () =
   let rec aux step population =
     let size = Array.length population in
-    if step = 100
-    then
+    let best_kb =
       Core.Array.min_elt population ~compare:(fun a b ->
         compare a.score b.score)
-      |> function
-      | Some keyboard -> pp_keys keyboard
-      | None -> ()
-    else begin
-      let population =
-        Array.init size (fun _ -> crossover population) |> mutation
-      in
-      let average =
-        Array.fold_left (fun acc kb -> acc +. kb.score) 0.0 population
-      in
-      Fmt.pr "%d %f@." step average;
-      aux (step + 1) population
-    end
+    in
+    match best_kb with
+    | Some keyboard ->
+      if step = 100
+      then pp_keys keyboard.keys
+      else begin
+        Array.sort (fun a b -> compare a.score b.score) population;
+        let population =
+          Array.mapi
+            (fun idx kb ->
+              if idx > int_of_float @@ ceil @@ (float size *. 0.05)
+              then crossover population
+              else kb)
+            population
+        in
+        mutation population;
+        let average =
+          Array.fold_left (fun acc kb -> acc +. kb.score) 0.0 population
+          /. float size
+        in
+        Fmt.pr "%d %f %f@." step keyboard.score average;
+        aux (step + 1) population
+      end
+    | None -> ()
   in
   aux 0 @@ init_population 10
 ;;

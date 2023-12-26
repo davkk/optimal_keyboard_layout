@@ -3,4 +3,4 @@
  (names main hist)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.enum))
- (libraries lib core fmt ppx_deriving))
+ (libraries lib core fmt ppx_deriving iter))
