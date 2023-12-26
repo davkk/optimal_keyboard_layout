@@ -1,3 +1,5 @@
+let words = Stdio.In_channel.with_file "macbeth.txt" ~f:In_channel.input_all
+
 type finger =
   | LPinky
   | LRing
@@ -12,8 +14,9 @@ type finger =
 
 type keyboard =
   { keys : char array
-  ; cols : int
+  ; score : float
   }
+[@@deriving show { with_path = false }]
 
 let key_to_finger key =
   match key mod 10 with
@@ -25,54 +28,170 @@ let key_to_finger key =
   | 7 -> RMiddle
   | 8 -> RRing
   | 9 -> RPinky
-  | _ -> failwith "unknown key"
+  | _ -> Noop
 ;;
 
-let dist kb a b =
-  let ya = a mod kb.cols in
-  let xa = a / kb.cols in
-  let yb = b mod kb.cols in
-  let xb = b / kb.cols in
-  abs @@ ((yb * yb) - (ya * ya) + (xb * xb) - (xa * xa))
+let coords idx =
+  let x = idx mod 10 in
+  let y = idx / 10 in
+  x, y
 ;;
 
-let fitness kb text =
+let dist a b =
+  let xa, ya = coords a in
+  let xb, yb = coords b in
+  float @@ abs ((yb * yb) - (ya * ya) + (xb * xb) - (xa * xa))
+;;
+
+let fitness text keys =
   let fingers = [| 11; 12; 13; 14; 17; 18; 19; 20 |] in
   String.fold_left
     (fun acc letter ->
-      let key =
-        Array.find_index (( = ) (Char.lowercase_ascii letter)) kb.keys
+      let curr_key =
+        keys
+        |> Array.find_index (( = ) @@ Char.lowercase_ascii letter)
+        |> Option.value ~default:(-1)
       in
-      match key with
-      | Some key -> begin
-        match key_to_finger key with
-        | finger -> begin
-          let finger_idx = finger_to_enum finger in
-          let prev = fingers.(finger_idx) in
-          fingers.(finger_idx) <- key;
-          acc + dist kb prev key
-        end
-      end
-      | None -> acc)
-    0
+      match key_to_finger curr_key with
+      | Noop -> acc
+      | finger -> begin
+        let finger_idx = finger_to_enum finger in
+        let prev_key = fingers.(finger_idx) in
+        fingers.(finger_idx) <- curr_key;
+        acc +. dist prev_key curr_key
+      end)
+    0.0
     text
 ;;
 
-(* let gen_init_population *)
-(* let crossover *)
-(* let mutation *)
+let shuffle arr =
+  let arr = Array.copy arr in
+  let l = Array.length arr in
+  for i = l - 1 downto 1 do
+    let j = Random.int (i + 1) in
+    Core.Array.swap arr i j
+  done;
+  arr
+;;
 
-let () =
+let init_population n =
   let letters = Seq.init 26 (fun idx -> Char.chr (idx + 97)) in
   let special = [ ';'; ','; '.'; '/' ] |> List.to_seq in
-  let keyboard =
-    { keys = Seq.append letters special |> Array.of_seq; cols = 10 }
-  in
-  let words =
-    Stdio.In_channel.with_file "macbeth.txt" ~f:(fun channel ->
-      In_channel.input_all channel)
-  in
-  let result = fitness keyboard words in
-  Fmt.pr "@.%d@." result
+  let keys = Seq.append letters special |> Array.of_seq in
+  Array.init n (fun _ ->
+    let keys = shuffle keys in
+    let score = fitness words keys in
+    { keys; score })
 ;;
-(* Fmt.pr "@.%a@." (Fmt.array ~sep:Fmt.sp Fmt.char) keys *)
+
+let roulette population =
+  Array.sort (fun a b -> compare a.score b.score) population;
+  let total_score =
+    Array.fold_left (fun acc kb -> acc +. kb.score) 0.0 population
+  in
+  let _, cdf =
+    Array.fold_left_map
+      (fun acc kb ->
+        let prob = acc +. (1.0 -. (kb.score /. total_score)) in
+        prob, prob)
+      0.0
+      population
+  in
+  cdf
+;;
+
+module IntSet = Set.Make (Int)
+
+let select_pair population =
+  let cdf = roulette population in
+  let rec aux set =
+    if IntSet.cardinal set = 2
+    then set
+    else (
+      let rand_kb =
+        Array.find_index (fun prob -> Random.float 1.0 < prob) cdf
+      in
+      match rand_kb with
+      | Some kb -> aux @@ IntSet.add kb set
+      | None -> failwith "impossible 1")
+  in
+  match aux IntSet.empty |> IntSet.elements with
+  | [ a; b ] -> population.(a), population.(b)
+  | _ -> failwith "impossible 2"
+;;
+
+let crossover population =
+  let parent1, parent2 = select_pair population in
+  let offspring =
+    Array.init (Array.length parent1.keys) (fun idx ->
+      let x1, y1 = coords idx in
+      if x1 < 5 then Some parent1.keys.(idx) else None)
+  in
+  Array.iter
+    (fun key ->
+      match Array.find_index Option.is_none offspring with
+      | Some idx ->
+        if not @@ Array.mem (Some key) offspring
+        then offspring.(idx) <- Some key
+      | None -> ())
+    parent2.keys;
+  let offspring = Core.Array.filter_map ~f:(fun kb -> kb) offspring in
+  { keys = offspring; score = fitness words offspring }
+;;
+
+let random_int_pair ~max =
+  let rec aux a b =
+    if a = b
+    then (
+      let a = Random.int max in
+      let b = Random.int max in
+      a, b)
+    else aux a b
+  in
+  aux 0 0
+;;
+
+let mutation population =
+  let p_mut = 0.03 in
+  Array.iter
+    (fun kb ->
+      let idx1, idx2 = random_int_pair ~max:(Array.length kb.keys) in
+      if Random.float 1.0 < p_mut then Core.Array.swap kb.keys idx1 idx2)
+    population;
+  population
+;;
+
+let optimize () =
+  let rec aux step population =
+    let size = Array.length population in
+    if step = 200
+    then (
+      let result =
+        Core.Array.min_elt population ~compare:(fun a b ->
+          compare a.score b.score)
+      in
+      Fmt.epr "@.Result: %a@." (Fmt.option pp_keyboard) result)
+    else begin
+      let new_population =
+        Array.init size (fun _ -> crossover population) |> mutation
+      in
+      let result =
+        Core.Array.min_elt new_population ~compare:(fun a b ->
+          compare a.score b.score)
+      in
+      (match result with
+       | Some kb -> Fmt.pr "%d %f@." step kb.score
+       | None -> ());
+      aux (step + 1) new_population
+    end
+  in
+  aux 0 @@ init_population 10
+;;
+
+let () =
+  Random.init 2001;
+  optimize ()
+;;
+(* optimize () *)
+
+(* Fmt.pr "@.%a@." (Fmt.array ~sep:Fmt.sp pp_keyboard) population *)
