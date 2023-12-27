@@ -1,6 +1,9 @@
 version = 0.26.1
 profile = janestreet
 
-margin = 80
+margin = 79
 doc-comments-padding = 100
 exp-grouping = preserve
+indicate-multiline-delimiters = closing-on-separate-line
+field-space = tight-decl
+break-separators = after

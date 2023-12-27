@@ -15,8 +15,8 @@ type finger =
 [@@deriving show { with_path = false }, enum]
 
 type keyboard =
-  { keys : char array
-  ; dist : float
+  { keys: char array;
+    dist: float
   }
 [@@deriving show { with_path = false }]
 
@@ -35,6 +35,15 @@ let key_to_finger key =
   | _ -> Noop
 ;;
 
+let pp_keys keys =
+  keys
+  |> Array.iteri (fun idx key ->
+    if idx mod 10 = 0 then Fmt.pr "@.";
+    Fmt.pr "%c" key
+  );
+  Fmt.pr "@."
+;;
+
 let coords ?(max = 10) idx =
   let x = idx mod max in
   let y = idx / max in
@@ -45,7 +54,7 @@ let ( <-> ) a b =
   let xa, ya = coords a in
   let xb, yb = coords b in
   let d = abs ((yb * yb) - (ya * ya) + (xb * xb) - (xa * xa)) in
-  d |> float |> sqrt
+  sqrt @@ float d
 ;;
 
 let calc_dist text keys =
@@ -59,14 +68,14 @@ let calc_dist text keys =
       in
       match key_to_finger curr_key with
       | Noop -> acc
-      | finger -> begin
+      | finger ->
         let finger_idx = finger_to_enum finger in
         let prev_key = fingers.(finger_idx) in
         let d = prev_key <-> curr_key in
-        let home_row_penalty = exp d -. 1.0 in
-        let pinky_penalty = exp @@ float (max (abs (finger_idx - 4)) 2) in
-        acc +. home_row_penalty +. pinky_penalty
-      end)
+        let home_row_penalty = 100.0 *. d *. d in
+        let pinky_penalty = abs_float (float finger_idx -. 3.5) in
+        acc +. home_row_penalty +. (pinky_penalty *. pinky_penalty)
+    )
     0.0
     text
 ;;
@@ -74,10 +83,11 @@ let calc_dist text keys =
 let shuffle arr =
   let arr = Array.copy arr in
   let l = Array.length arr in
-  for i = l - 1 downto 1 do
+  Iter.(l - 1 --^ 0)
+  |> Iter.iter (fun i ->
     let j = Random.int (i + 1) in
     Core.Array.swap arr i j
-  done;
+  );
   arr
 ;;
 
@@ -88,7 +98,8 @@ let init_population n =
   Array.init n (fun _ ->
     let keys = shuffle keys in
     let dist = calc_dist words keys in
-    { keys; dist })
+    { keys; dist }
+  )
 ;;
 
 let roulette population =
@@ -104,7 +115,8 @@ let roulette population =
   Iter.fold_map
     (fun acc score ->
       let prob = acc +. (score /. total_score) in
-      prob, prob)
+      prob, prob
+    )
     0.0
     scores
   |> Iter.to_array
@@ -114,125 +126,121 @@ module IntSet = Set.Make (Int)
 
 let select_pair population =
   let cdf = roulette population in
-  let rec aux set =
-    if IntSet.cardinal set = 2
-    then set
-    else (
-      let x = Random.float 1.0 in
-      let rand_kb =
-        Array.find_index (fun prob -> x < prob) cdf
-        |> Option.value ~default:(-1)
+  let rec aux a b =
+    if a = b
+    then (
+      let x1 = Random.float 1.0 in
+      let x2 = Random.float 1.0 in
+      let a =
+        Array.find_index (fun prob -> x1 <= prob) cdf
+        |> Option.value ~default:0
       in
-      aux @@ IntSet.add rand_kb set)
+      let b =
+        Array.find_index (fun prob -> x2 <= prob) cdf
+        |> Option.value ~default:0
+      in
+      aux a b
+    )
+    else a, b
   in
-  match aux IntSet.empty |> IntSet.elements with
-  | [ a; b ] -> population.(a), population.(b)
-  | _ -> failwith "cannot perform the crossover"
+  let a, b = aux 0 0 in
+  population.(a), population.(b)
 ;;
 
-let pp_keys keys =
-  keys
-  |> Array.iteri (fun idx key ->
-    if idx mod 10 = 0 then Fmt.epr "@.";
-    Fmt.epr "%c " key);
-  Fmt.epr "@."
-;;
+module Iter = struct
+  include Iter
 
-let transposed_idx_iter ~from ~upto =
-  let iter = Iter.(from -- (upto - 1)) in
-  let iter =
-    if from = 0 then iter else Iter.append iter Iter.(0 -- (from - 1))
-  in
-  iter
-  |> Iter.map (fun idx ->
-    let x, y = coords ~max:3 idx in
-    y + (x * 10))
-;;
+  let transpose ?(from = 0) ?upto arr =
+    let upto = Option.value ~default:(Array.length arr) upto in
+    Iter.append Iter.(from -- (upto - 1)) Iter.(0 -- (from - 1))
+    |> Iter.map (fun idx ->
+      let x, y = coords ~max:3 idx in
+      let idx = y + (x * 10) in
+      idx, arr.(idx)
+    )
+  ;;
+end
+
+module CharSet = Set.Make (Char)
 
 let crossover population =
   let parent1, parent2 = select_pair population in
   let offspring = Array.copy parent1.keys in
   let len = Array.length offspring in
-  let split = len / 2 in
-  (* Fmt.pr "@.split: %d@." split; *)
-  let lh_keys =
-    transposed_idx_iter ~from:0 ~upto:split
-    |> Iter.map (fun idx -> parent1.keys.(idx))
-    |> Iter.to_array
+  let split = int_of_float (Random.float 1.0 *. float len) in
+  let used_keys =
+    Iter.transpose ~upto:split parent1.keys
+    |> Iter.fold
+         (fun set (idx, key) ->
+           offspring.(idx) <- key;
+           CharSet.add key set
+         )
+         CharSet.empty
   in
-  let rh_keys =
-    transposed_idx_iter ~from:split ~upto:len
-    |> Iter.map (fun idx -> parent2.keys.(idx))
-    |> Iter.filter (fun key -> not @@ Array.mem key lh_keys)
-    |> Iter.to_array
+  let rest_keys =
+    Iter.transpose ~from:split parent2.keys
+    |> Iter.filter (fun (_, key) -> not @@ CharSet.mem key used_keys)
+    |> Iter.to_seq_persistent
   in
-  transposed_idx_iter ~from:split ~upto:len
-  |> Iter.take (Array.length rh_keys)
-  |> Iter.iteri (fun idx key_idx -> offspring.(key_idx) <- rh_keys.(idx));
-  (* pp_keys parent1.keys; *)
-  (* pp_keys parent2.keys; *)
-  (* pp_keys offspring; *)
+  let _ =
+    Iter.transpose ~from:split parent1.keys
+    |> Iter.to_seq_persistent
+    |> Seq.zip rest_keys
+    |> Seq.fold_left
+         (fun set ((_, key), (idx, _)) ->
+           offspring.(idx) <- key;
+           CharSet.add key set
+         )
+         used_keys
+  in
   { keys = offspring; dist = calc_dist words offspring }
 ;;
 
 let random_int_pair ~max =
-  let rec aux a b =
-    if a = b
-    then (
-      let a = Random.int max in
-      let b = Random.int max in
-      a, b)
-    else aux a b
-  in
-  aux 0 0
+  let rec aux a b = if a = b then aux a (Random.int max) else a, b in
+  aux (Random.int max) (Random.int max)
 ;;
 
 let mutation ~rate kb =
-  let idx1, idx2 = random_int_pair ~max:(Array.length kb.keys) in
   if Random.float 1.0 < rate
-  then begin
+  then (
+    let idx1, idx2 = random_int_pair ~max:(Array.length kb.keys) in
     Core.Array.swap kb.keys idx1 idx2;
     { kb with dist = calc_dist words kb.keys }
-  end
+  )
   else kb
 ;;
 
 let optimize () =
   let rec aux step best_kb population =
-    let size = Array.length population in
-    let min_kb =
-      Core.Array.min_elt population ~compare:(fun a b -> compare a.dist b.dist)
-    in
-    match min_kb with
-    | Some keyboard ->
-      if step = 10000
-      then begin
-        Fmt.epr "@.%f@." best_kb.dist;
-        pp_keys best_kb.keys
-      end
-      else begin
-        Array.sort (fun a b -> compare a.dist b.dist) population;
-        let elite_idx = int_of_float (float (Array.length population) *. 0.9) in
-        let population =
-          population
-          |> Array.mapi (fun idx kb ->
-            if idx < elite_idx then crossover population else kb)
-          |> Array.map (fun kb -> mutation ~rate:0.03 kb)
-        in
-        let average =
-          Array.fold_left (fun acc kb -> acc +. kb.dist) 0.0 population
-          /. float size
-        in
-        Fmt.pr "%d %f %f@." step keyboard.dist average;
-        aux
-          (step + 1)
-          (if keyboard.dist < best_kb.dist then keyboard else best_kb)
-          population
-      end
-    | None -> ()
+    let pop_size = Array.length population in
+    if step = 0
+    then (
+      Fmt.pr "@.%f@." best_kb.dist;
+      pp_keys best_kb.keys
+    )
+    else (
+      (* pp_keys best_kb.keys; *)
+      Array.sort (fun a b -> compare a.dist b.dist) population;
+      let min_kb = population.(0) in
+      let elite_idx = pop_size / 3 in
+      let population =
+        population
+        |> Array.mapi (fun idx kb ->
+          if idx > elite_idx then crossover population else kb
+        )
+        |> Array.map (fun kb -> mutation ~rate:0.1 kb)
+      in
+      let average =
+        Array.fold_left (fun acc kb -> acc +. kb.dist) 0.0 population
+        /. float pop_size
+      in
+      Fmt.pr "%f %f@." min_kb.dist average;
+      aux (step - 1) min_kb population
+    )
   in
   let population = init_population 10 in
-  aux 0 population.(0) population
+  aux 100 population.(0) population
 ;;
 
 let () =
