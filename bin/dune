@@ -1,6 +1,13 @@
 (executables
- (public_names main hist)
- (names main hist)
- (preprocess
-  (pps ppx_deriving.show ppx_deriving.enum))
- (libraries lib core fmt ppx_deriving iter))
+  (public_names main hist)
+  (names main hist)
+  (ocamlopt_flags (:standard -O3 -unbox-closures))
+  (preprocess
+    (pps ppx_deriving.show ppx_deriving.enum))
+  (libraries core fmt ppx_deriving iter))
+
+(env
+  (dev
+    (flags (:standard -w +42)))
+  (release
+    (ocamlopt_flags (:standard -unbox-closures -O3 -ccopt -O3))))

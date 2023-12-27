@@ -57,7 +57,7 @@ let ( <-> ) a b =
   sqrt @@ float d
 ;;
 
-let calc_dist text keys =
+let calc_dist keys =
   let fingers = [| 10; 11; 12; 13; 16; 17; 18; 19 |] in
   String.fold_left
     (fun acc letter ->
@@ -77,7 +77,7 @@ let calc_dist text keys =
         acc +. home_row_penalty +. (pinky_penalty *. pinky_penalty)
     )
     0.0
-    text
+    words
 ;;
 
 let shuffle arr =
@@ -97,7 +97,7 @@ let init_population n =
   let keys = Seq.append letters special |> Array.of_seq in
   Array.init n (fun _ ->
     let keys = shuffle keys in
-    let dist = calc_dist words keys in
+    let dist = calc_dist keys in
     { keys; dist }
   )
 ;;
@@ -193,7 +193,7 @@ let crossover population =
          )
          used_keys
   in
-  { keys = offspring; dist = calc_dist words offspring }
+  { keys = offspring; dist = calc_dist offspring }
 ;;
 
 let random_int_pair ~max =
@@ -206,7 +206,7 @@ let mutation ~rate kb =
   then (
     let idx1, idx2 = random_int_pair ~max:(Array.length kb.keys) in
     Core.Array.swap kb.keys idx1 idx2;
-    { kb with dist = calc_dist words kb.keys }
+    { kb with dist = calc_dist kb.keys }
   )
   else kb
 ;;
@@ -239,8 +239,8 @@ let optimize () =
       aux (step - 1) min_kb population
     )
   in
-  let population = init_population 10 in
-  aux 100 population.(0) population
+  let population = init_population 30 in
+  aux 1000 population.(0) population
 ;;
 
 let () =
