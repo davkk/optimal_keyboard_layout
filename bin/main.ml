@@ -38,10 +38,10 @@ let key_to_finger key =
 let pp_keys keys =
   keys
   |> Array.iteri (fun idx key ->
-    if idx mod 10 = 0 then Fmt.pr "@.";
-    Fmt.pr "%c" key
+    if idx mod 10 = 0 then Fmt.epr "@.";
+    Fmt.epr "%c" key
   );
-  Fmt.pr "@."
+  Fmt.epr "@."
 ;;
 
 let coords ?(max = 10) idx =
@@ -216,11 +216,10 @@ let optimize () =
     let pop_size = Array.length population in
     if step = 0
     then (
-      Fmt.pr "@.%f@." best_kb.dist;
+      Fmt.epr "%f@." best_kb.dist;
       pp_keys best_kb.keys
     )
     else (
-      (* pp_keys best_kb.keys; *)
       Array.sort (fun a b -> compare a.dist b.dist) population;
       let min_kb = population.(0) in
       let elite_idx = pop_size / 3 in
@@ -244,6 +243,17 @@ let optimize () =
 ;;
 
 let () =
-  Random.init 2001;
+  Random.init @@ int_of_string Sys.argv.(1);
   optimize ()
 ;;
+
+(* let () = *)
+(*   let qwerty = *)
+(*     calc_dist @@ Array.of_seq @@ String.to_seq "qwertyuiopasdfghjkl;zxcvbnm,./" *)
+(*   in *)
+(*   let dvorak = *)
+(*     calc_dist @@ Array.of_seq @@ String.to_seq "',.pyfgcrlaoeuidhtns;qjkxbmwvz" *)
+(*   in *)
+(*   Fmt.pr "qwerty: %f@." qwerty; *)
+(*   Fmt.pr "dvorak: %f@." dvorak *)
+(* ;; *)
