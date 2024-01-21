@@ -73,7 +73,7 @@ let calc_dist keys =
         let prev_key = fingers.(finger_idx) in
         let d = prev_key <-> curr_key in
         let home_row_penalty = 100.0 *. d *. d in
-        let pinky_penalty = abs_float (float finger_idx -. 3.5) in
+        let pinky_penalty = float finger_idx -. 3.5 in
         acc +. home_row_penalty +. (pinky_penalty *. pinky_penalty)
     )
     0.0

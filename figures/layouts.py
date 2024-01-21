@@ -25,14 +25,14 @@ for idx, result in enumerate(results):
     ax.grid(False)
     ax.set_axis_off()
     ax.set_xlim(0, 10)
-    ax.set_ylim(-1, 3)
+    ax.set_ylim(-3, 1)
 
     for y, row in enumerate(layout):
         for x, letter in enumerate(row):
-            ax.plot(x, y, c="white")
+            ax.plot(x, -y, c="white")
             ax.text(
                 x,
-                y,
+                -y,
                 letter,
                 ha="center",
                 va="center",
