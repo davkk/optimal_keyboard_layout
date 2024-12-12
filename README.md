@@ -1,22 +1,3 @@
----
-marp: true
-filetype: pdf
-theme: uncover
-title: Optymalny Layout Klawiatury
-class: invert
-style: |
-  * {
-    text-align: left;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-    width: fit-content;
-  }
-  .MathJax {
-    margin-top: 1em !important;
-    margin-bottom: 1em !important;
-  }
----
-
 # ⌨️
 ## Optymalny layout klawiatury
 Dawid Karpiński, 22.01.2024 r.
